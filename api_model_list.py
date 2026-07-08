@@ -20,6 +20,7 @@
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 import argparse
+import base64
 import json
 import os
 import sys
@@ -34,10 +35,30 @@ from urllib.request import Request, urlopen
 DEFAULT_TIMEOUT = 60
 USER_AGENT = "api-model-list/2.0"
 
-# 标准测试用图片 (1x1 红色像素 PNG, base64)
-TINY_RED_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
-)
+# 测试用图片: 优先从 assets/test_image.png 读取，回退到内置 1x1 红色 PNG
+_TEST_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "test_image.png")
+
+
+def _load_test_image() -> str:
+    """加载测试图片，返回 data URI。优先使用外部文件，回退到内置 1x1 红色 PNG。"""
+    if os.path.isfile(_TEST_IMAGE_PATH):
+        with open(_TEST_IMAGE_PATH, "rb") as f:
+            data = f.read()
+        # 检测实际格式 (文件扩展名可能不准确)
+        if data[:2] == b"\xff\xd8":
+            mime = "image/jpeg"
+        elif data[:4] == b"\x89PNG":
+            mime = "image/png"
+        else:
+            mime = "image/png"
+        b64 = base64.b64encode(data).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    # 回退: 内置 1x1 红色 PNG
+    tiny = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFBQ"
+        "IAX8jx0gAAAABJRU5ErkJggg=="
+    )
+    return f"data:image/png;base64,{tiny}"
 
 # ── URL 工具 ────────────────────────────────────────────────────────
 
@@ -172,7 +193,7 @@ def test_vision(model: str, url: str, api_key: str, timeout: int = DEFAULT_TIMEO
                 "content": [
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{TINY_RED_PNG_B64}"},
+                        "image_url": {"url": _load_test_image()},
                     },
                     {"type": "text", "text": "What color is this image? Answer in one word."},
                 ],

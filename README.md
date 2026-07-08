@@ -277,8 +277,6 @@ api-model-list/
 
 ## 📄 License
 
-**API Model List & Inspector** — Copyright 2024 Raya Friandion
-
 Licensed under the **GNU Affero General Public License v3 or later** (AGPL-3.0-or-later).
 
 See [LICENSE](LICENSE) for the full text.
