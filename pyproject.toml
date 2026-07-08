@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "api-model-list"
+version = "1.0.0"
+description = "Query all available model IDs from any OpenAI-compatible API"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+keywords = ["openai", "api", "models", "llm", "cli"]
+authors = [
+    {name = "Raya Friandion", email = "amizhisa@outlook.com"},
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/rayafriandion/api-model-list"
+Repository = "https://github.com/rayafriandion/api-model-list"
+Issues = "https://github.com/rayafriandion/api-model-list/issues"
+
+[project.scripts]
+api-model-list = "api_model_list:main"
+
+[tool.setuptools.packages.find]
+include = ["api_model_list*"]
