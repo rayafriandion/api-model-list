@@ -25,6 +25,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.error import HTTPError, URLError
@@ -365,6 +366,83 @@ def check_identity(model: str, url: str, api_key: str, timeout: int = DEFAULT_TI
     return result
 
 
+# ── API Key 归属检测 ────────────────────────────────────────────────
+
+DETECT_TIMEOUT = 8
+
+PROVIDERS = [
+    # ── 国际服务商 ──
+    ("OpenAI", "https://api.openai.com/v1"),
+    ("Together AI", "https://api.together.xyz/v1"),
+    ("Groq", "https://api.groq.com/openai/v1"),
+    ("Fireworks AI", "https://api.fireworks.ai/inference/v1"),
+    ("Mistral AI", "https://api.mistral.ai/v1"),
+    ("xAI (Grok)", "https://api.x.ai/v1"),
+    ("Perplexity AI", "https://api.perplexity.ai"),
+    ("DeepInfra", "https://api.deepinfra.com/v1/openai"),
+    # ── 国内服务商 ──
+    ("DeepSeek / 深度求索", "https://api.deepseek.com"),
+    ("Moonshot / 月之暗面", "https://api.moonshot.cn/v1"),
+    ("Qwen / 通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    ("Zhipu / 智谱 GLM", "https://open.bigmodel.cn/api/paas/v4"),
+    ("Baichuan / 百川智能", "https://api.baichuan-ai.com/v1"),
+    ("Yi / 零一万物", "https://api.01.ai/v1"),
+    ("StepFun / 阶跃星辰", "https://api.stepfun.com/v1"),
+    ("SiliconFlow / 硅基流动", "https://api.siliconflow.cn/v1"),
+    ("Hunyuan / 腾讯混元", "https://api.hunyuan.cloud.tencent.com/v1"),
+    ("Volcengine Ark / 火山引擎", "https://ark.cn-beijing.volces.com/api/v3"),
+    ("MiniMax / 稀宇科技", "https://api.minimax.chat/v1"),
+]
+
+
+def _test_provider(api_key: str, name: str, base_url: str, timeout: int) -> dict:
+    """测试一个服务商是否接受该 API Key。"""
+    try:
+        models_url = build_models_url(base_url)
+        resp = _make_get(models_url, api_key, timeout=timeout)
+        models = extract_models(resp)
+        return {"name": name, "url": base_url, "match": True, "model_count": len(models), "error": None, "status": None}
+    except HTTPError as e:
+        return {"name": name, "url": base_url, "match": False, "model_count": 0, "error": None, "status": e.code}
+    except URLError as e:
+        return {"name": name, "url": base_url, "match": False, "model_count": 0, "error": f"网络错误: {e.reason}", "status": None}
+    except json.JSONDecodeError:
+        return {"name": name, "url": base_url, "match": False, "model_count": 0, "error": "响应格式错误", "status": None}
+    except Exception as e:
+        return {"name": name, "url": base_url, "match": False, "model_count": 0, "error": str(e), "status": None}
+
+
+def detect_provider(api_key: str, timeout: int = DETECT_TIMEOUT) -> dict:
+    """并行探测所有已知服务商，找出 API Key 的归属。"""
+    results = []
+    matches = []
+    total = len(PROVIDERS)
+
+    print(f"  ⏳ 正在探测 {total} 家服务商...\n")
+
+    with ThreadPoolExecutor(max_workers=total) as executor:
+        futures = {executor.submit(_test_provider, api_key, name, url, timeout): (name, url) for name, url in PROVIDERS}
+
+        for future in as_completed(futures):
+            r = future.result()
+            results.append(r)
+            if r["match"]:
+                matches.append(r)
+                print(f"  ✅ {r['name']}  ← 命中！({r['model_count']} 个模型)")
+            elif r["status"] == 401 or r["status"] == 403:
+                print(f"  ❌ {r['name']}  - 认证失败")
+            elif r["status"] == 404:
+                print(f"  ❌ {r['name']}  - 端点不存在")
+            elif r["status"]:
+                print(f"  ❌ {r['name']}  - HTTP {r['status']}")
+            elif r["error"]:
+                print(f"  ❌ {r['name']}  - {r['error']}")
+            else:
+                print(f"  ❌ {r['name']}  - 未知错误")
+
+    return {"results": results, "matches": matches}
+
+
 # ── 子命令实现 ──────────────────────────────────────────────────────
 
 
@@ -545,6 +623,41 @@ def cmd_check(args):
     emoji_label, desc = verdict_map.get(result["verdict"], ("❓", ""))
     print(f"\n  判定: {emoji_label} - {desc}")
     print()
+
+
+def cmd_where(args):
+    """where 子命令 - 检测 API Key 所属服务商。"""
+    api_key = args.key
+    if not api_key:
+        print("\n  ❌ 请提供 API Key (-k)\n")
+        return
+
+    masked = api_key[:12] + "..." + api_key[-4:] if len(api_key) > 16 else api_key[:8] + "..."
+    print(f"\n  🔍 API Key 归属检测")
+    print(f"  {'─' * 55}")
+    print(f"  🔑 Key: {masked}\n")
+
+    t0 = time.time()
+    result = detect_provider(api_key, args.timeout)
+    elapsed = time.time() - t0
+
+    print(f"  {'─' * 55}")
+
+    if result["matches"]:
+        matches = sorted(result["matches"], key=lambda x: x["model_count"], reverse=True)
+        primary = matches[0]
+        print(f"\n  🎯 结果: 该 API Key 属于 {primary['name']}")
+        print(f"  📡 Base URL: {primary['url']}")
+        print(f"  📦 模型数量: {primary['model_count']}")
+        if len(matches) > 1:
+            print(f"\n  ℹ️  同时兼容以下服务商:")
+            for m in matches[1:]:
+                print(f"     - {m['name']} ({m['model_count']} 个模型)")
+    else:
+        print(f"\n  ❌ 结果: 未匹配到已知服务商")
+        print(f"  💡 该 API Key 可能来自中转站或个人部署的 API 代理")
+
+    print(f"  ⏱️  耗时: {elapsed:.1f}s\n")
 
 
 def cmd_probe(args):
@@ -784,6 +897,7 @@ SHELL_HELP = """\
     test  -m MODEL                        测试模型能力 (文本/视觉/工具/JSON)
     check -m MODEL                        检测"挂羊头卖狗肉"
     probe [-f FILTER] [--identity] [-o FILE]  批量探测
+    where [-k KEY]                         检测 API Key 归属服务商
     models                                重新列出模型 (同 list)
     use url <URL>                         切换 API Base URL
     use key <KEY>                         切换 API Key
@@ -940,6 +1054,19 @@ def shell_mode(initial_url: str = "", initial_key: str = ""):
                         j += 1
                 cmd_probe(args)
 
+            elif cmd == "where":
+                args = argparse.Namespace(
+                    key=api_key,
+                    timeout=DETECT_TIMEOUT,
+                )
+                j = 0
+                while j < len(rest):
+                    if rest[j] in ("-k", "--key") and j + 1 < len(rest):
+                        args.key = rest[j + 1]; j += 2
+                    else:
+                        j += 1
+                cmd_where(args)
+
             else:
                 print(f"  ❌ 未知命令: {cmd}  (输入 help 查看可用命令)")
 
@@ -1013,6 +1140,11 @@ def main():
     p_probe.add_argument("-o", "--output", help="保存结果到 JSON 文件")
     p_probe.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help=f"超时秒数 (默认 {DEFAULT_TIMEOUT})")
 
+    # ── where ──
+    p_where = sub.add_parser("where", help="检测 API Key 所属服务商 (无需 URL)")
+    p_where.add_argument("-k", "--key", help="API Key")
+    p_where.add_argument("--timeout", type=int, default=DETECT_TIMEOUT, help=f"单次探测超时 (默认 {DETECT_TIMEOUT}s)")
+
     args = parser.parse_args()
 
     # 没有子命令 -> 进入 shell
@@ -1040,6 +1172,8 @@ def main():
         cmd_check(args)
     elif args.command == "probe":
         cmd_probe(args)
+    elif args.command == "where":
+        cmd_where(args)
     else:
         parser.print_help()
 
